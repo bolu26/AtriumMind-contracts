@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+  "contracts/vault-registry",
+  "contracts/access-lease",
+  "contracts/subscription",
+]
+
+[workspace.dependencies]
+soroban-sdk = { version = "21.0.0" }
