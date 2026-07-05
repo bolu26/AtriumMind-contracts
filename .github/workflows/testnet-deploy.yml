@@ -8,6 +8,9 @@ on:
       - '.github/workflows/testnet-deploy.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   deploy:
     name: Build + Deploy + Init on Stellar Testnet
@@ -51,110 +54,90 @@ jobs:
             --rpc-url https://soroban-testnet.stellar.org \
             --network-passphrase "Test SDF Network ; September 2015" 2>/dev/null || true
 
-      - name: Fund accounts via Friendbot
+      - name: Fund accounts
         run: |
           DEPLOYER_PUB="GCJH6RF7EU7LRXZK3QPJD2XZ7ZL7GI67WUPVRWROJ6XDEJKHIKW7GFWX"
           for ADDR in "$DEPLOYER_PUB" "$BACKEND_PUBLIC" "$PUBLISHER1_PUBLIC" "$PUBLISHER2_PUBLIC"; do
-            echo "Funding $ADDR..."
-            curl -sf "https://friendbot.stellar.org?addr=${ADDR}" > /dev/null \
-              && echo "  ✅" || echo "  ⚠️ already funded"
+            echo "Funding $ADDR"
+            curl -sf "https://friendbot.stellar.org?addr=${ADDR}" > /dev/null && echo "  ✅" || echo "  ⚠️"
           done
 
-      - name: Build vault-registry
-        run: cargo build --target wasm32-unknown-unknown --release --package vault-registry
-
-      - name: Build access-lease
-        run: cargo build --target wasm32-unknown-unknown --release --package access-lease
-
-      - name: Build subscription
-        run: cargo build --target wasm32-unknown-unknown --release --package subscription
-
-      - name: Show built WASMs
-        run: ls -lh target/wasm32-unknown-unknown/release/*.wasm
+      - name: Build all contracts
+        run: |
+          cargo build --target wasm32-unknown-unknown --release \
+            --package vault-registry \
+            --package access-lease \
+            --package subscription
+          ls -lh target/wasm32-unknown-unknown/release/*.wasm
 
       - name: Deploy vault-registry
-        id: vault
         run: |
           ID=$(stellar contract deploy \
             --wasm target/wasm32-unknown-unknown/release/vault_registry.wasm \
             --source-account "$DEPLOYER_SECRET" \
             --network testnet --ignore-checks)
-          echo "vault_registry=$ID" | tee -a $GITHUB_ENV contract-ids.env
-          echo "vault_registry=$ID" >> $GITHUB_OUTPUT
-          echo "✅ vault-registry: $ID"
+          echo "VAULT_REGISTRY=$ID" >> $GITHUB_ENV
+          echo "::notice::vault-registry=$ID"
 
       - name: Deploy access-lease
-        id: lease
         run: |
           ID=$(stellar contract deploy \
             --wasm target/wasm32-unknown-unknown/release/access_lease.wasm \
             --source-account "$DEPLOYER_SECRET" \
             --network testnet --ignore-checks)
-          echo "access_lease=$ID" | tee -a $GITHUB_ENV contract-ids.env
-          echo "access_lease=$ID" >> $GITHUB_OUTPUT
-          echo "✅ access-lease: $ID"
+          echo "ACCESS_LEASE=$ID" >> $GITHUB_ENV
+          echo "::notice::access-lease=$ID"
 
       - name: Deploy subscription
-        id: sub
         run: |
           ID=$(stellar contract deploy \
             --wasm target/wasm32-unknown-unknown/release/subscription.wasm \
             --source-account "$DEPLOYER_SECRET" \
             --network testnet --ignore-checks)
-          echo "subscription=$ID" | tee -a $GITHUB_ENV contract-ids.env
-          echo "subscription=$ID" >> $GITHUB_OUTPUT
-          echo "✅ subscription: $ID"
+          echo "SUBSCRIPTION=$ID" >> $GITHUB_ENV
+          echo "::notice::subscription=$ID"
 
       - name: Init access-lease
         run: |
           stellar contract invoke \
-            --id "$access_lease" \
+            --id "$ACCESS_LEASE" \
             --source-account "$DEPLOYER_SECRET" \
             --network testnet \
             -- init --admin "$BACKEND_PUBLIC"
-          echo "✅ access-lease init done"
 
       - name: Init subscription
         run: |
           stellar contract invoke \
-            --id "$subscription" \
+            --id "$SUBSCRIPTION" \
             --source-account "$DEPLOYER_SECRET" \
             --network testnet \
             -- init --admin "$BACKEND_PUBLIC"
-          echo "✅ subscription init done"
 
-      - name: Job summary
+      - name: Save + commit contract IDs
         run: |
-          cat contract-ids.env
-          echo "## ✅ AtriumMind Live on Stellar Testnet" >> $GITHUB_STEP_SUMMARY
-          echo "| Contract | ID |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| vault-registry | \`$vault_registry\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| access-lease   | \`$access_lease\` |"   >> $GITHUB_STEP_SUMMARY
-          echo "| subscription   | \`$subscription\` |"   >> $GITHUB_STEP_SUMMARY
-          echo "[Explorer →](https://stellar.expert/explorer/testnet/contract/$vault_registry)" >> $GITHUB_STEP_SUMMARY
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: contract-ids
-          path: contract-ids.env
-          retention-days: 90
-
-  commit-ids:
-    name: Commit Contract IDs to Repo
-    runs-on: ubuntu-latest
-    needs: deploy
-    if: success()
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: contract-ids
-          path: ./deployed/
-      - name: Commit contract IDs
-        run: |
+          mkdir -p deployed
+          cat > deployed/contract-ids.env << EOF
+          vault_registry=$VAULT_REGISTRY
+          access_lease=$ACCESS_LEASE
+          subscription=$SUBSCRIPTION
+          network=testnet
+          deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+          
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add deployed/contract-ids.env
-          git diff --cached --quiet || git commit -m "chore: update deployed contract IDs [skip ci]"
+          git diff --cached --quiet || git commit -m "chore: deployed contract IDs [skip ci]"
           git push
+
+      - name: Job summary
+        run: |
+          cat deployed/contract-ids.env
+          echo "## ✅ AtriumMind Contracts on Stellar Testnet" >> $GITHUB_STEP_SUMMARY
+          echo "| Contract | ID |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| vault-registry | \`$VAULT_REGISTRY\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| access-lease   | \`$ACCESS_LEASE\` |"   >> $GITHUB_STEP_SUMMARY
+          echo "| subscription   | \`$SUBSCRIPTION\` |"   >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[View on Stellar Expert →](https://stellar.expert/explorer/testnet/contract/$VAULT_REGISTRY)" >> $GITHUB_STEP_SUMMARY
