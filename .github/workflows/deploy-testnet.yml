@@ -2,15 +2,10 @@ name: Deploy to Stellar Testnet
 
 on:
   workflow_dispatch:
-    inputs:
-      force_redeploy:
-        description: 'Force redeploy even if contracts exist'
-        required: false
-        default: 'false'
 
 jobs:
   deploy:
-    name: Build, Deploy & Seed
+    name: Build, Deploy & Init
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -24,165 +19,126 @@ jobs:
       PUBLISHER2_SECRET: ${{ secrets.PUBLISHER2_SECRET }}
 
     steps:
-      # ── 1. Checkout ────────────────────────────────────────────────────────
       - uses: actions/checkout@v4
 
-      # ── 2. Rust + wasm32 target ────────────────────────────────────────────
-      - name: Install Rust + wasm32
+      - name: Install Rust stable + wasm32
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
-      # ── 3. Install Stellar CLI ─────────────────────────────────────────────
-      - name: Install Stellar CLI
+      - name: Install Stellar CLI v27
         run: |
           curl -sL https://github.com/stellar/stellar-cli/releases/download/v27.0.0/stellar-cli-27.0.0-x86_64-unknown-linux-gnu.tar.gz \
             | tar xz -C /usr/local/bin
           stellar --version
 
-      # ── 4. Configure testnet ───────────────────────────────────────────────
-      - name: Configure Stellar testnet
+      - name: Configure network + keys
         run: |
           stellar network add testnet \
             --rpc-url https://soroban-testnet.stellar.org \
             --network-passphrase "Test SDF Network ; September 2015" 2>/dev/null || true
-          stellar keys add deployer --secret-key "$DEPLOYER_SECRET" 2>/dev/null || true
-          stellar keys add backend  --secret-key "$BACKEND_SECRET"  2>/dev/null || true
+          stellar keys add deployer --secret-key "$DEPLOYER_SECRET"
+          stellar keys add backend  --secret-key "$BACKEND_SECRET"
+          DEPLOYER_PUB=$(stellar keys public-key deployer)
+          echo "Deployer public key: $DEPLOYER_PUB"
 
-      # ── 5. Fund all accounts ───────────────────────────────────────────────
       - name: Fund accounts via Friendbot
         run: |
-          DEPLOYER_PUBLIC=$(stellar keys public-key deployer 2>/dev/null || echo "")
-          for ADDR in "$DEPLOYER_PUBLIC" "$BACKEND_PUBLIC" "$PUBLISHER1_PUBLIC" "$PUBLISHER2_PUBLIC"; do
-            echo "Funding $ADDR..."
-            curl -sf "https://friendbot.stellar.org?addr=$ADDR" > /dev/null \
-              && echo "  ✅ funded" \
-              || echo "  ℹ️  already funded (or error - continuing)"
+          DEPLOYER_PUB=$(stellar keys public-key deployer)
+          for ADDR in "$DEPLOYER_PUB" "$BACKEND_PUBLIC" "$PUBLISHER1_PUBLIC" "$PUBLISHER2_PUBLIC"; do
+            echo "Funding: $ADDR"
+            curl -sf "https://friendbot.stellar.org?addr=$ADDR" > /dev/null && echo "✅ funded" || echo "⚠️ already funded"
           done
 
-      # ── 6. Build WASM contracts ────────────────────────────────────────────
-      - name: Build contracts
+      - name: Show Rust + cargo info
         run: |
-          cargo build --target wasm32-unknown-unknown --release --workspace
-          ls -lh target/wasm32-unknown-unknown/release/*.wasm
+          rustc --version
+          cargo --version
+          rustup show
 
-      # ── 7. Deploy vault-registry ───────────────────────────────────────────
+      - name: Build vault-registry
+        run: |
+          cargo build --target wasm32-unknown-unknown --release \
+            --package vault-registry 2>&1
+          ls -lh target/wasm32-unknown-unknown/release/vault_registry.wasm
+
+      - name: Build access-lease
+        run: |
+          cargo build --target wasm32-unknown-unknown --release \
+            --package access-lease 2>&1
+          ls -lh target/wasm32-unknown-unknown/release/access_lease.wasm
+
+      - name: Build subscription
+        run: |
+          cargo build --target wasm32-unknown-unknown --release \
+            --package subscription 2>&1
+          ls -lh target/wasm32-unknown-unknown/release/subscription.wasm
+
       - name: Deploy vault-registry
-        id: vault_registry
+        id: vault
         run: |
           ID=$(stellar contract deploy \
             --wasm target/wasm32-unknown-unknown/release/vault_registry.wasm \
-            --source deployer \
-            --network testnet \
-            --ignore-checks 2>/dev/null)
-          echo "CONTRACT_ID=$ID" >> $GITHUB_OUTPUT
-          echo "vault_registry=$ID" | tee -a contract-ids.env
+            --source deployer --network testnet --ignore-checks)
+          echo "vault_registry=$ID" | tee -a $GITHUB_ENV contract-ids.env
+          echo "vault_registry=$ID" >> $GITHUB_OUTPUT
           echo "✅ vault-registry: $ID"
 
-      # ── 8. Deploy access-lease ─────────────────────────────────────────────
       - name: Deploy access-lease
-        id: access_lease
+        id: lease
         run: |
           ID=$(stellar contract deploy \
             --wasm target/wasm32-unknown-unknown/release/access_lease.wasm \
-            --source deployer \
-            --network testnet \
-            --ignore-checks 2>/dev/null)
-          echo "CONTRACT_ID=$ID" >> $GITHUB_OUTPUT
-          echo "access_lease=$ID" | tee -a contract-ids.env
+            --source deployer --network testnet --ignore-checks)
+          echo "access_lease=$ID" | tee -a $GITHUB_ENV contract-ids.env
+          echo "access_lease=$ID" >> $GITHUB_OUTPUT
           echo "✅ access-lease: $ID"
 
-      # ── 9. Deploy subscription ─────────────────────────────────────────────
       - name: Deploy subscription
-        id: subscription
+        id: sub
         run: |
           ID=$(stellar contract deploy \
             --wasm target/wasm32-unknown-unknown/release/subscription.wasm \
-            --source deployer \
-            --network testnet \
-            --ignore-checks 2>/dev/null)
-          echo "CONTRACT_ID=$ID" >> $GITHUB_OUTPUT
-          echo "subscription=$ID" | tee -a contract-ids.env
+            --source deployer --network testnet --ignore-checks)
+          echo "subscription=$ID" | tee -a $GITHUB_ENV contract-ids.env
+          echo "subscription=$ID" >> $GITHUB_OUTPUT
           echo "✅ subscription: $ID"
 
-      # ── 10. Initialise contracts ───────────────────────────────────────────
       - name: Init access-lease
         run: |
-          source contract-ids.env
           stellar contract invoke \
             --id "$access_lease" \
-            --source deployer \
-            --network testnet \
-            -- init \
-            --admin "$BACKEND_PUBLIC"
-          echo "✅ access-lease initialised"
+            --source deployer --network testnet \
+            -- init --admin "$BACKEND_PUBLIC"
+          echo "✅ access-lease init done"
 
       - name: Init subscription
         run: |
-          source contract-ids.env
           stellar contract invoke \
             --id "$subscription" \
-            --source deployer \
-            --network testnet \
-            -- init \
-            --admin "$BACKEND_PUBLIC"
-          echo "✅ subscription initialised"
+            --source deployer --network testnet \
+            -- init --admin "$BACKEND_PUBLIC"
+          echo "✅ subscription init done"
 
-      # ── 11. Verify deployments ─────────────────────────────────────────────
-      - name: Verify vault-registry
+      - name: Verify and summarise
         run: |
-          source contract-ids.env
-          COUNT=$(stellar contract invoke \
-            --id "$vault_registry" \
-            --source deployer \
-            --network testnet \
-            -- count 2>/dev/null || echo "0")
-          echo "✅ vault-registry live — count: $COUNT"
-
-      # ── 12. Save contract IDs as artifact + summary ────────────────────────
-      - name: Save contract IDs
-        run: |
-          source contract-ids.env
-          cat > contract-ids.json << JSON
-          {
-            "vault_registry": "$vault_registry",
-            "access_lease": "$access_lease",
-            "subscription": "$subscription",
-            "network": "testnet",
-            "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          }
-          JSON
-          cat contract-ids.json
-          
-          # Write to GitHub Job Summary
-          echo "## ✅ AtriumMind Contracts Deployed to Stellar Testnet" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ AtriumMind Contracts on Stellar Testnet" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Contract | ID |" >> $GITHUB_STEP_SUMMARY
+          echo "| Contract | Contract ID |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
           echo "| vault-registry | \`$vault_registry\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| access-lease | \`$access_lease\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| subscription | \`$subscription\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| access-lease   | \`$access_lease\`   |" >> $GITHUB_STEP_SUMMARY
+          echo "| subscription   | \`$subscription\`   |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "View on Stellar Expert:" >> $GITHUB_STEP_SUMMARY
+          echo "### Stellar Expert Links" >> $GITHUB_STEP_SUMMARY
           echo "- [vault-registry](https://stellar.expert/explorer/testnet/contract/$vault_registry)" >> $GITHUB_STEP_SUMMARY
           echo "- [access-lease](https://stellar.expert/explorer/testnet/contract/$access_lease)" >> $GITHUB_STEP_SUMMARY
           echo "- [subscription](https://stellar.expert/explorer/testnet/contract/$subscription)" >> $GITHUB_STEP_SUMMARY
+          
+          cat contract-ids.env
 
-      - name: Upload contract IDs artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: contract-ids
-          path: |
-            contract-ids.env
-            contract-ids.json
-          retention-days: 30
+          path: contract-ids.env
+          retention-days: 90
