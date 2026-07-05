@@ -154,3 +154,4 @@ All persistent entries are bumped **90 days** on every write — actively manage
 ## License
 
 MIT © 2025 bolu26
+# AtriumMind Contracts — deployed on Stellar testnet
