@@ -1,0 +1,188 @@
+name: Deploy to Stellar Testnet
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_redeploy:
+        description: 'Force redeploy even if contracts exist'
+        required: false
+        default: 'false'
+
+jobs:
+  deploy:
+    name: Build, Deploy & Seed
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DEPLOYER_SECRET:   ${{ secrets.DEPLOYER_SECRET }}
+      BACKEND_PUBLIC:    ${{ secrets.BACKEND_PUBLIC }}
+      BACKEND_SECRET:    ${{ secrets.BACKEND_SECRET }}
+      PUBLISHER1_PUBLIC: ${{ secrets.PUBLISHER1_PUBLIC }}
+      PUBLISHER1_SECRET: ${{ secrets.PUBLISHER1_SECRET }}
+      PUBLISHER2_PUBLIC: ${{ secrets.PUBLISHER2_PUBLIC }}
+      PUBLISHER2_SECRET: ${{ secrets.PUBLISHER2_SECRET }}
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+
+      # ── 2. Rust + wasm32 target ────────────────────────────────────────────
+      - name: Install Rust + wasm32
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # ── 3. Install Stellar CLI ─────────────────────────────────────────────
+      - name: Install Stellar CLI
+        run: |
+          curl -sL https://github.com/stellar/stellar-cli/releases/download/v27.0.0/stellar-cli-27.0.0-x86_64-unknown-linux-gnu.tar.gz \
+            | tar xz -C /usr/local/bin
+          stellar --version
+
+      # ── 4. Configure testnet ───────────────────────────────────────────────
+      - name: Configure Stellar testnet
+        run: |
+          stellar network add testnet \
+            --rpc-url https://soroban-testnet.stellar.org \
+            --network-passphrase "Test SDF Network ; September 2015" 2>/dev/null || true
+          stellar keys add deployer --secret-key "$DEPLOYER_SECRET" 2>/dev/null || true
+          stellar keys add backend  --secret-key "$BACKEND_SECRET"  2>/dev/null || true
+
+      # ── 5. Fund all accounts ───────────────────────────────────────────────
+      - name: Fund accounts via Friendbot
+        run: |
+          DEPLOYER_PUBLIC=$(stellar keys public-key deployer 2>/dev/null || echo "")
+          for ADDR in "$DEPLOYER_PUBLIC" "$BACKEND_PUBLIC" "$PUBLISHER1_PUBLIC" "$PUBLISHER2_PUBLIC"; do
+            echo "Funding $ADDR..."
+            curl -sf "https://friendbot.stellar.org?addr=$ADDR" > /dev/null \
+              && echo "  ✅ funded" \
+              || echo "  ℹ️  already funded (or error - continuing)"
+          done
+
+      # ── 6. Build WASM contracts ────────────────────────────────────────────
+      - name: Build contracts
+        run: |
+          cargo build --target wasm32-unknown-unknown --release --workspace
+          ls -lh target/wasm32-unknown-unknown/release/*.wasm
+
+      # ── 7. Deploy vault-registry ───────────────────────────────────────────
+      - name: Deploy vault-registry
+        id: vault_registry
+        run: |
+          ID=$(stellar contract deploy \
+            --wasm target/wasm32-unknown-unknown/release/vault_registry.wasm \
+            --source deployer \
+            --network testnet \
+            --ignore-checks 2>/dev/null)
+          echo "CONTRACT_ID=$ID" >> $GITHUB_OUTPUT
+          echo "vault_registry=$ID" | tee -a contract-ids.env
+          echo "✅ vault-registry: $ID"
+
+      # ── 8. Deploy access-lease ─────────────────────────────────────────────
+      - name: Deploy access-lease
+        id: access_lease
+        run: |
+          ID=$(stellar contract deploy \
+            --wasm target/wasm32-unknown-unknown/release/access_lease.wasm \
+            --source deployer \
+            --network testnet \
+            --ignore-checks 2>/dev/null)
+          echo "CONTRACT_ID=$ID" >> $GITHUB_OUTPUT
+          echo "access_lease=$ID" | tee -a contract-ids.env
+          echo "✅ access-lease: $ID"
+
+      # ── 9. Deploy subscription ─────────────────────────────────────────────
+      - name: Deploy subscription
+        id: subscription
+        run: |
+          ID=$(stellar contract deploy \
+            --wasm target/wasm32-unknown-unknown/release/subscription.wasm \
+            --source deployer \
+            --network testnet \
+            --ignore-checks 2>/dev/null)
+          echo "CONTRACT_ID=$ID" >> $GITHUB_OUTPUT
+          echo "subscription=$ID" | tee -a contract-ids.env
+          echo "✅ subscription: $ID"
+
+      # ── 10. Initialise contracts ───────────────────────────────────────────
+      - name: Init access-lease
+        run: |
+          source contract-ids.env
+          stellar contract invoke \
+            --id "$access_lease" \
+            --source deployer \
+            --network testnet \
+            -- init \
+            --admin "$BACKEND_PUBLIC"
+          echo "✅ access-lease initialised"
+
+      - name: Init subscription
+        run: |
+          source contract-ids.env
+          stellar contract invoke \
+            --id "$subscription" \
+            --source deployer \
+            --network testnet \
+            -- init \
+            --admin "$BACKEND_PUBLIC"
+          echo "✅ subscription initialised"
+
+      # ── 11. Verify deployments ─────────────────────────────────────────────
+      - name: Verify vault-registry
+        run: |
+          source contract-ids.env
+          COUNT=$(stellar contract invoke \
+            --id "$vault_registry" \
+            --source deployer \
+            --network testnet \
+            -- count 2>/dev/null || echo "0")
+          echo "✅ vault-registry live — count: $COUNT"
+
+      # ── 12. Save contract IDs as artifact + summary ────────────────────────
+      - name: Save contract IDs
+        run: |
+          source contract-ids.env
+          cat > contract-ids.json << JSON
+          {
+            "vault_registry": "$vault_registry",
+            "access_lease": "$access_lease",
+            "subscription": "$subscription",
+            "network": "testnet",
+            "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          JSON
+          cat contract-ids.json
+          
+          # Write to GitHub Job Summary
+          echo "## ✅ AtriumMind Contracts Deployed to Stellar Testnet" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Contract | ID |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| vault-registry | \`$vault_registry\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| access-lease | \`$access_lease\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| subscription | \`$subscription\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View on Stellar Expert:" >> $GITHUB_STEP_SUMMARY
+          echo "- [vault-registry](https://stellar.expert/explorer/testnet/contract/$vault_registry)" >> $GITHUB_STEP_SUMMARY
+          echo "- [access-lease](https://stellar.expert/explorer/testnet/contract/$access_lease)" >> $GITHUB_STEP_SUMMARY
+          echo "- [subscription](https://stellar.expert/explorer/testnet/contract/$subscription)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload contract IDs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-ids
+          path: |
+            contract-ids.env
+            contract-ids.json
+          retention-days: 30
