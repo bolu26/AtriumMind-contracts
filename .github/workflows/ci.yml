@@ -19,7 +19,7 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rustfmt, clippy
 
-      - name: Cache Cargo registry
+      - name: Cache Cargo
         uses: actions/cache@v4
         with:
           path: |
@@ -29,16 +29,17 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Run tests (verbose)
-        run: cargo test --workspace 2>&1 | tee /tmp/test_output.txt; exit ${PIPESTATUS[0]}
+      - name: Check compile (vault-registry)
+        run: cargo test --package vault-registry 2>&1 || true
 
-      - name: Upload test output on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-output
-          path: /tmp/test_output.txt
-          retention-days: 3
+      - name: Check compile (access-lease)
+        run: cargo test --package access-lease 2>&1 || true
+
+      - name: Check compile (subscription)
+        run: cargo test --package subscription 2>&1 || true
+
+      - name: Run all tests
+        run: cargo test --workspace
 
       - name: Check formatting
         run: cargo fmt --check
@@ -53,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable + wasm32
+      - name: Install Rust + wasm32
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
