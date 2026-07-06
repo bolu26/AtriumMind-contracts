@@ -222,12 +222,13 @@ impl SubscriptionManager {
 
 
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
-    fn setup() -> (Env, SubscriptionManagerClient) {
+    fn setup<'a>() -> (Env, SubscriptionManagerClient<'a>) {
         let env = Env::default();
         env.mock_all_auths();
         let id = env.register(SubscriptionManager, ());
