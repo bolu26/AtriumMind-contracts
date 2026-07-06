@@ -157,12 +157,13 @@ impl AccessLease {
 
 
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
-    fn setup() -> (Env, AccessLeaseClient) {
+    fn setup<'a>() -> (Env, AccessLeaseClient<'a>) {
         let env = Env::default();
         env.mock_all_auths();
         let id = env.register(AccessLease, ());
