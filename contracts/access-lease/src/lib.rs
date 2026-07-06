@@ -165,7 +165,7 @@ mod tests {
     fn setup() -> (Env, AccessLeaseClient) {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register_contract(None, AccessLease);
+        let id = env.register(AccessLease, ());
         let client = AccessLeaseClient::new(&env, &id);
         (env, client)
     }
