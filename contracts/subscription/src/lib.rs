@@ -218,3 +218,66 @@ impl SubscriptionManager {
         Ok(())
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+
+    #[test]
+    fn test_create_plan_and_subscribe() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, SubscriptionManager);
+        let client = SubscriptionManagerClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let publisher = Address::generate(&env);
+        let subscriber = Address::generate(&env);
+        let plan_id = String::from_str(&env, "plan_001");
+
+        client.init(&admin);
+
+        // Publisher creates a plan — 1 USDC = 10_000_000 stroops
+        let plan = client.create_plan(&publisher, &plan_id, &10_000_000i128);
+        assert_eq!(plan.price_per_cycle, 10_000_000);
+        assert!(plan.active);
+
+        // Not subscribed yet
+        assert!(!client.is_active(&plan_id, &subscriber));
+
+        // Admin subscribes the buyer
+        let sub = client.subscribe(&plan_id, &subscriber);
+        assert!(!sub.cancelled);
+        assert!(sub.current_period_end > env.ledger().sequence());
+
+        // Now active
+        assert!(client.is_active(&plan_id, &subscriber));
+    }
+
+    #[test]
+    fn test_cancel_subscription() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, SubscriptionManager);
+        let client = SubscriptionManagerClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let publisher = Address::generate(&env);
+        let subscriber = Address::generate(&env);
+        let plan_id = String::from_str(&env, "plan_001");
+
+        client.init(&admin);
+        client.create_plan(&publisher, &plan_id, &5_000_000i128);
+        client.subscribe(&plan_id, &subscriber);
+        assert!(client.is_active(&plan_id, &subscriber));
+
+        // Subscriber cancels — still active until period end
+        client.cancel(&plan_id, &subscriber);
+        let sub = client.get_subscription(&plan_id, &subscriber).unwrap();
+        assert!(sub.cancelled);
+    }
+}
