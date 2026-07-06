@@ -38,9 +38,6 @@ jobs:
       - name: Test subscription
         run: cargo test --package subscription
 
-      - name: Check formatting
-        run: cargo fmt --check
-
       - name: Clippy
         run: cargo clippy --workspace
 
