@@ -155,6 +155,7 @@ impl AccessLease {
 }
 
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,7 +166,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let contract_id = env.register_contract(None, AccessLease);
+        let contract_id = env.register(AccessLease, ());
         let client = AccessLeaseClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
@@ -173,15 +174,10 @@ mod tests {
         let resource_id = String::from_str(&env, "res_001");
 
         client.init(&admin);
-
-        // No lease yet
         assert!(!client.is_valid(&resource_id, &buyer));
 
-        // Grant lease for 1000 ledgers
-        let lease = client.grant_lease(&resource_id, &buyer, &1000);
-        assert_eq!(lease.duration_ledgers, 1000);
-
-        // Lease should now be valid
+        let lease = client.grant_lease(&resource_id, &buyer, &1000u32);
+        assert_eq!(lease.duration_ledgers, 1000u32);
         assert!(client.is_valid(&resource_id, &buyer));
     }
 
@@ -190,7 +186,7 @@ mod tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let contract_id = env.register_contract(None, AccessLease);
+        let contract_id = env.register(AccessLease, ());
         let client = AccessLeaseClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
@@ -198,7 +194,7 @@ mod tests {
         let resource_id = String::from_str(&env, "res_001");
 
         client.init(&admin);
-        client.grant_lease(&resource_id, &buyer, &1000);
+        client.grant_lease(&resource_id, &buyer, &1000u32);
         assert!(client.is_valid(&resource_id, &buyer));
 
         client.revoke_lease(&resource_id, &buyer);
