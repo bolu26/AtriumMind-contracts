@@ -230,7 +230,7 @@ mod tests {
     fn setup() -> (Env, SubscriptionManagerClient) {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register_contract(None, SubscriptionManager);
+        let id = env.register(SubscriptionManager, ());
         let client = SubscriptionManagerClient::new(&env, &id);
         (env, client)
     }
