@@ -156,19 +156,23 @@ impl AccessLease {
 
 
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
-    #[test]
-    fn test_grant_and_check_lease() {
+    fn setup() -> (Env, AccessLeaseClient) {
         let env = Env::default();
         env.mock_all_auths();
+        let id = env.register_contract(None, AccessLease);
+        let client = AccessLeaseClient::new(&env, &id);
+        (env, client)
+    }
 
-        let contract_id = env.register(AccessLease, ());
-        let client = AccessLeaseClient::new(&env, &contract_id);
-
+    #[test]
+    fn test_grant_and_check_lease() {
+        let (env, client) = setup();
         let admin = Address::generate(&env);
         let buyer = Address::generate(&env);
         let resource_id = String::from_str(&env, "res_001");
@@ -183,18 +187,13 @@ mod tests {
 
     #[test]
     fn test_revoke_lease() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register(AccessLease, ());
-        let client = AccessLeaseClient::new(&env, &contract_id);
-
+        let (env, client) = setup();
         let admin = Address::generate(&env);
         let buyer = Address::generate(&env);
         let resource_id = String::from_str(&env, "res_001");
 
         client.init(&admin);
-        client.grant_lease(&resource_id, &buyer, &1000u32);
+        client.grant_lease(&resource_id, &buyer, &500u32);
         assert!(client.is_valid(&resource_id, &buyer));
 
         client.revoke_lease(&resource_id, &buyer);
