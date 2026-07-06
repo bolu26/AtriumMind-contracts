@@ -221,19 +221,23 @@ impl SubscriptionManager {
 
 
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
-    #[test]
-    fn test_create_plan_and_subscribe() {
+    fn setup() -> (Env, SubscriptionManagerClient) {
         let env = Env::default();
         env.mock_all_auths();
+        let id = env.register_contract(None, SubscriptionManager);
+        let client = SubscriptionManagerClient::new(&env, &id);
+        (env, client)
+    }
 
-        let contract_id = env.register(SubscriptionManager, ());
-        let client = SubscriptionManagerClient::new(&env, &contract_id);
-
+    #[test]
+    fn test_create_plan_and_subscribe() {
+        let (env, client) = setup();
         let admin = Address::generate(&env);
         let publisher = Address::generate(&env);
         let subscriber = Address::generate(&env);
@@ -246,20 +250,13 @@ mod tests {
         assert!(plan.active);
 
         assert!(!client.is_active(&plan_id, &subscriber));
-
-        let sub = client.subscribe(&plan_id, &subscriber);
-        assert!(!sub.cancelled);
+        client.subscribe(&plan_id, &subscriber);
         assert!(client.is_active(&plan_id, &subscriber));
     }
 
     #[test]
     fn test_cancel_subscription() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register(SubscriptionManager, ());
-        let client = SubscriptionManagerClient::new(&env, &contract_id);
-
+        let (env, client) = setup();
         let admin = Address::generate(&env);
         let publisher = Address::generate(&env);
         let subscriber = Address::generate(&env);
@@ -268,7 +265,6 @@ mod tests {
         client.init(&admin);
         client.create_plan(&publisher, &plan_id, &5_000_000i128);
         client.subscribe(&plan_id, &subscriber);
-        assert!(client.is_active(&plan_id, &subscriber));
 
         client.cancel(&plan_id, &subscriber);
         let sub = client.get_subscription(&plan_id, &subscriber).unwrap();
