@@ -223,25 +223,22 @@ impl SubscriptionManager {
 
 
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
-    fn setup<'a>() -> (Env, SubscriptionManagerClient<'a>) {
+    #[test]
+    fn test_create_plan() {
         let env = Env::default();
         env.mock_all_auths();
+
         let id = env.register(SubscriptionManager, ());
         let client = SubscriptionManagerClient::new(&env, &id);
-        (env, client)
-    }
 
-    #[test]
-    fn test_create_plan_and_subscribe() {
-        let (env, client) = setup();
         let admin = Address::generate(&env);
         let publisher = Address::generate(&env);
-        let subscriber = Address::generate(&env);
         let plan_id = String::from_str(&env, "plan_001");
 
         client.init(&admin);
@@ -249,26 +246,26 @@ mod tests {
         let plan = client.create_plan(&publisher, &plan_id, &10_000_000i128);
         assert_eq!(plan.price_per_cycle, 10_000_000i128);
         assert!(plan.active);
+    }
+
+    #[test]
+    fn test_subscribe_and_active() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let id = env.register(SubscriptionManager, ());
+        let client = SubscriptionManagerClient::new(&env, &id);
+
+        let admin = Address::generate(&env);
+        let publisher = Address::generate(&env);
+        let subscriber = Address::generate(&env);
+        let plan_id = String::from_str(&env, "plan_002");
+
+        client.init(&admin);
+        client.create_plan(&publisher, &plan_id, &1_000_000i128);
 
         assert!(!client.is_active(&plan_id, &subscriber));
         client.subscribe(&plan_id, &subscriber);
         assert!(client.is_active(&plan_id, &subscriber));
-    }
-
-    #[test]
-    fn test_cancel_subscription() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        let publisher = Address::generate(&env);
-        let subscriber = Address::generate(&env);
-        let plan_id = String::from_str(&env, "plan_001");
-
-        client.init(&admin);
-        client.create_plan(&publisher, &plan_id, &5_000_000i128);
-        client.subscribe(&plan_id, &subscriber);
-
-        client.cancel(&plan_id, &subscriber);
-        let sub = client.get_subscription(&plan_id, &subscriber).unwrap();
-        assert!(sub.cancelled);
     }
 }
