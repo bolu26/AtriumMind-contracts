@@ -29,17 +29,14 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Check compile (vault-registry)
-        run: cargo test --package vault-registry 2>&1 || true
+      - name: Test vault-registry
+        run: cargo test --package vault-registry
 
-      - name: Check compile (access-lease)
-        run: cargo test --package access-lease 2>&1 || true
+      - name: Test access-lease
+        run: cargo test --package access-lease
 
-      - name: Check compile (subscription)
-        run: cargo test --package subscription 2>&1 || true
-
-      - name: Run all tests
-        run: cargo test --workspace
+      - name: Test subscription
+        run: cargo test --package subscription
 
       - name: Check formatting
         run: cargo fmt --check
