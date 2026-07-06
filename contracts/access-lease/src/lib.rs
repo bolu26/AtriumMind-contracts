@@ -153,3 +153,55 @@ impl AccessLease {
         Ok(())
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+
+    #[test]
+    fn test_grant_and_check_lease() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, AccessLease);
+        let client = AccessLeaseClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let buyer = Address::generate(&env);
+        let resource_id = String::from_str(&env, "res_001");
+
+        client.init(&admin);
+
+        // No lease yet
+        assert!(!client.is_valid(&resource_id, &buyer));
+
+        // Grant lease for 1000 ledgers
+        let lease = client.grant_lease(&resource_id, &buyer, &1000);
+        assert_eq!(lease.duration_ledgers, 1000);
+
+        // Lease should now be valid
+        assert!(client.is_valid(&resource_id, &buyer));
+    }
+
+    #[test]
+    fn test_revoke_lease() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, AccessLease);
+        let client = AccessLeaseClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let buyer = Address::generate(&env);
+        let resource_id = String::from_str(&env, "res_001");
+
+        client.init(&admin);
+        client.grant_lease(&resource_id, &buyer, &1000);
+        assert!(client.is_valid(&resource_id, &buyer));
+
+        client.revoke_lease(&resource_id, &buyer);
+        assert!(!client.is_valid(&resource_id, &buyer));
+    }
+}
